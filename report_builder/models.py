@@ -8,23 +8,14 @@ from django.db import models
 from django.db.models import Avg, Min, Max, Count, Sum
 from django.db.models.signals import post_save
 from report_builder.unique_slugify import unique_slugify
-from report_utils.model_introspection import get_model_from_path_string
+from report_builder.utils import get_model_from_path_string
 from dateutil import parser
 
 AUTH_USER_MODEL = getattr(settings, 'AUTH_USER_MODEL', 'auth.User')
 
-
 class Report(models.Model):
     """ A saved report with queryset and descriptive fields
     """
-    def _get_model_manager(self):
-        """ Get  manager from settings else use objects
-        """
-        model_manager = 'objects'
-        if getattr(settings, 'REPORT_BUILDER_MODEL_MANAGER', False):
-            model_manager = settings.REPORT_BUILDER_MODEL_MANAGER
-        return model_manager
-
     def _get_allowed_models():
         models = ContentType.objects.all()
         if getattr(settings, 'REPORT_BUILDER_INCLUDE', False):
@@ -41,17 +32,17 @@ class Report(models.Model):
     modified = models.DateField(auto_now=True)
     user_created = models.ForeignKey(AUTH_USER_MODEL, editable=False, blank=True, null=True)
     user_modified = models.ForeignKey(AUTH_USER_MODEL, editable=False, blank=True, null=True, related_name="report_modified_set")
-    distinct = models.BooleanField(default=False)
-    report_file = models.FileField(upload_to="report_files", blank=True)
-    report_file_creation = models.DateTimeField(blank=True, null=True)
+    distinct = models.BooleanField()
     starred = models.ManyToManyField(AUTH_USER_MODEL, blank=True,
                                      help_text="These users have starred this report for easy reference.",
                                      related_name="report_starred_set")
-
+    
+    
     def save(self, *args, **kwargs):
         if not self.id:
             unique_slugify(self, self.name)
         super(Report, self).save(*args, **kwargs)
+
 
     def add_aggregates(self, queryset):
         for display_field in self.displayfield_set.filter(aggregate__isnull=False):
@@ -66,19 +57,13 @@ class Report(models.Model):
             elif display_field.aggregate == "Sum":
                 queryset = queryset.annotate(Sum(display_field.path + display_field.field))
         return queryset
+
     
     def get_query(self):
         report = self
         model_class = report.root_model.model_class()
         message= ""
-
-        # Check for report_builder_model_manger property on the model
-        if getattr(model_class, 'report_builder_model_manager', False):
-            objects = getattr(model_class, 'report_builder_model_manager').all()
-        else:
-            # Get global model manager
-            manager = report._get_model_manager()
-            objects = getattr(model_class, manager).all()
+        objects = model_class.objects.all()
 
         # Filters
         # NOTE: group all the filters together into one in order to avoid 
@@ -149,30 +134,24 @@ class Report(models.Model):
         if report.distinct:
             objects = objects.distinct()
 
-        return objects, message
+        return objects
     
     @models.permalink
     def get_absolute_url(self):
         return ("report_update_view", [str(self.id)])
     
     def edit(self):
-        return mark_safe('<a href="{0}"><img style="width: 26px; margin: -6px" src="{1}report_builder/img/edit.svg"/></a>'.format(
+        return mark_safe('<a href="{0}"><img style="width: 26px; margin: -6px" src="{1}report_builder/img/edit.png"/></a>'.format(
             self.get_absolute_url(),
             getattr(settings, 'STATIC_URL', '/static/')   
         ))
     edit.allow_tags = True
     
     def download_xlsx(self):
-        if getattr(settings, 'REPORT_BUILDER_ASYNC_REPORT', False):
-            return mark_safe('<a href="#" onclick="get_async_report({0})"><img style="width: 26px; margin: -6px" src="{1}report_builder/img/download.svg"/></a>'.format(
-                self.id,
-                getattr(settings, 'STATIC_URL', '/static/'),
-            ))
-        else:
-            return mark_safe('<a href="{0}"><img style="width: 26px; margin: -6px" src="{1}report_builder/img/download.svg"/></a>'.format(
-                reverse('report_download_xlsx', args=[self.id]),
-                getattr(settings, 'STATIC_URL', '/static/'),
-            ))
+        return mark_safe('<a href="{0}"><img style="width: 26px; margin: -6px" src="{1}report_builder/img/download.svg"/></a>'.format(
+            reverse('report_builder.views.download_xlsx', args=[self.id]),
+            getattr(settings, 'STATIC_URL', '/static/'),
+        ))
     download_xlsx.short_description = "Download"
     download_xlsx.allow_tags = True
     
@@ -214,7 +193,7 @@ class DisplayField(models.Model):
     field_verbose = models.CharField(max_length=2000)
     name = models.CharField(max_length=2000)
     sort = models.IntegerField(blank=True, null=True)
-    sort_reverse = models.BooleanField(verbose_name="Reverse", default=False)
+    sort_reverse = models.BooleanField(verbose_name="Reverse")
     width = models.IntegerField(default=15)
     aggregate = models.CharField(
         max_length=5,
@@ -241,8 +220,7 @@ class DisplayField(models.Model):
         except:
             model_field = None
         if model_field and model_field.choices:
-            # See https://github.com/burke-software/django-report-builder/pull/93
-            return ((model_field.get_prep_value(key), val) for key, val in model_field.choices)
+            return model_field.choices
 
     @property
     def choices_dict(self):
@@ -297,7 +275,7 @@ class FilterField(models.Model):
     )
     filter_value = models.CharField(max_length=2000)
     filter_value2 = models.CharField(max_length=2000, blank=True)
-    exclude = models.BooleanField(default=False)
+    exclude = models.BooleanField()
     position = models.PositiveSmallIntegerField(blank = True, null = True)
 
     class Meta:
