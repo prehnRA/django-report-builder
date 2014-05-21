@@ -8,6 +8,29 @@ from report_builder.models import DisplayField, Report, FilterField, Format
 from django.conf import settings
 
 static_url = getattr(settings, 'STATIC_URL', '/static/')
+
+class DisplayFieldForm(forms.ModelForm):
+    position = forms.IntegerField(widget=forms.HiddenInput, required=False)
+    class Meta:
+        model = DisplayField
+
+class DisplayFieldInline(admin.StackedInline):
+    model = DisplayField
+    form = DisplayFieldForm
+    extra = 0
+    sortable_field_name = "position"
+
+class FilterFieldForm(forms.ModelForm):
+    position = forms.IntegerField(widget=forms.HiddenInput)
+    class Meta:
+        model = FilterField
+
+class FilterFieldInline(admin.StackedInline):
+    model = FilterField
+    form = FilterFieldForm
+    extra = 0
+    sortable_field_name = "position"
+    
     
 class StarredFilter(SimpleListFilter):
     title = 'Your starred reports'
@@ -23,15 +46,14 @@ class StarredFilter(SimpleListFilter):
 
 class ReportAdmin(admin.ModelAdmin):
     list_display = ('ajax_starred', 'edit', 'name', 'description', 'root_model', 'created', 'modified', 'user_created', 'download_xlsx','copy_report',)
-    readonly_fields = ['slug', ]
-    fields = ['name', 'description', 'root_model', 'slug',]
+    readonly_fields = ['slug']
+    fields = ['name', 'description', 'root_model', 'slug']
     search_fields = ('name', 'description')
     list_filter = (StarredFilter, 'root_model', 'created', 'modified', 'root_model__app_label')
     list_display_links = []
-    show_save = False
 
     class Media:
-        js = [ static_url+'report_builder/js/jquery-1.10.2.min.js', static_url+'report_builder/js/report_list.js', static_url+'report_builder/js/report_form.js']
+        js = [ static_url+'report_builder/js/jquery-1.8.2.min.js', static_url+'report_builder/js/report_list.js',]
 
     def response_add(self, request, obj, post_url_continue=None):
         if '_easy' in request.POST:
@@ -43,11 +65,6 @@ class ReportAdmin(admin.ModelAdmin):
             return HttpResponseRedirect(obj.get_absolute_url())
         return super(ReportAdmin, self).response_change(request, obj)
         
-    def change_view(self, request, object_id, extra_context=None):
-        if getattr(settings, 'REPORT_BUILDER_ASYNC_REPORT', False) and 'report_file' not in self.fields:
-            self.fields += ['report_file', 'report_file_creation']
-        return super(ReportAdmin, self).change_view(request, object_id, extra_context=None)    
-    
     def changelist_view(self, request, extra_context=None):
         self.user = request.user
         return super(ReportAdmin, self).changelist_view(request, extra_context=extra_context)
@@ -69,8 +86,6 @@ class ReportAdmin(admin.ModelAdmin):
             obj.user_created = request.user
             star_user = True
         obj.user_modified = request.user
-        if obj.distinct == None:
-            obj.distinct = False
         obj.save()
         if star_user: # Star created reports automatically
             obj.starred.add(request.user)
@@ -85,7 +100,7 @@ def export_to_report(modeladmin, request, queryset):
     for s in selected_int:
         selected.append(str(s))
     ct = ContentType.objects.get_for_model(queryset.model)
-    return HttpResponseRedirect(reverse('export_to_report') + "?ct=%s&admin_url=%s&ids=%s" % (ct.pk, admin_url, ",".join(selected)))
+    return HttpResponseRedirect(reverse('report_builder.views.export_to_report') + "?ct=%s&admin_url=%s&ids=%s" % (ct.pk, admin_url, ",".join(selected)))
 
 if getattr(settings, 'REPORT_BUILDER_GLOBAL_EXPORT', False):
     admin.site.add_action(export_to_report, 'Export to Report')
